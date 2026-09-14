@@ -7,3 +7,5 @@ scikit-learn>=1.5
 pybaseball>=2.2.7
 python-dateutil>=2.9
 lxml>=5.2
+
+nflreadpy>=0.1.2
