@@ -1,7 +1,7 @@
 import argparse
 from database import init_db
-from pipelines.mlb import fetch_recent, build_hitter_pitcher_history, build_pitch_arsenal
-from pipelines.nfl import fetch_pbp, build_team_tendencies, build_defense_vs_position
+from mlb import fetch_recent, build_hitter_pitcher_history, build_pitch_arsenal
+from nfl import fetch_pbp, build_team_tendencies, build_defense_vs_position
 from live_data import fetch_mlb_schedule, fetch_nfl_schedule, fetch_nfl_injuries, fetch_nfl_depth_charts
 
 

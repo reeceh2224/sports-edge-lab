@@ -10,7 +10,7 @@ import streamlit as st
 from config import DB_PATH
 from database import init_db
 from demo_data import mlb_board, nfl_board, source_table, mlb_bet_explorer, nfl_bet_explorer
-from features.common import american_to_implied
+from common import american_to_implied
 from live_data import fetch_mlb_schedule, fetch_nfl_schedule, data_health
 from research_cards import mlb_pitcher_research, nfl_team_research
 

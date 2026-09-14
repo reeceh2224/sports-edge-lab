@@ -1,5 +1,5 @@
 from demo_data import mlb_board, nfl_board
-from features.common import american_to_implied, shrink_rate
+from common import american_to_implied, shrink_rate
 from analysis_engine import sample_reliability, recency_weight
 
 assert len(mlb_board()) >= 3

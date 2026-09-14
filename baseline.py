@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from features.common import american_to_implied, edge, confidence
+from common import american_to_implied, edge, confidence
 
 @dataclass
 class ModelOutput:
