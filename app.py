@@ -6,7 +6,7 @@ from database import init_db
 from live_data import fetch_mlb_schedule,fetch_nfl_schedule,data_health
 from public_odds import fetch_team_moneylines,fetch_public_props
 from trend_analysis import analyze_prop
-from team_analysis import analyze_mlb_moneyline
+from team_analysis import analyze_team_moneyline
 from demo_data import source_table
 
 st.set_page_config(page_title="Sports Edge Lab",page_icon="📊",layout="wide",initial_sidebar_state="collapsed")
@@ -63,7 +63,7 @@ def _team_verdict_text(a):
 
 def show_team_lines(sport,schedule):
     st.markdown("### Main team betting lines")
-    st.caption("Moneyline + total + run line/spread from a clean public odds board. MLB moneylines are graded against starter, recent team form and run differential — not just whether the odds are positive.")
+    st.caption("Moneyline + total + run line/spread from a clean public odds board. Moneylines are graded with matchup data, not just displayed as prices. MLB uses probable starters + recent run form; NFL blends recent results/scoring margin with home field.")
     try:lines,meta=team_markets(sport)
     except Exception as exc:st.warning(f"Team lines unavailable right now: {exc}");return
     st.markdown(f"<span class='pill'>PUBLIC ODDS SOURCE · {meta['source']}</span>",unsafe_allow_html=True)
@@ -74,8 +74,8 @@ def show_team_lines(sport,schedule):
                 st.markdown(f"**{r['team']}**"+(f" · {r.get('pitcher','')}" if r.get('pitcher') else ""))
                 c1,c2,c3=st.columns(3)
                 c1.metric("Moneyline",r.get("moneyline") or "—");c2.metric("Total",r.get("total") or "—");c3.metric("Run line" if sport=="MLB" else "Spread",r.get("side") or "—")
-                if sport=="MLB" and r.get("moneyline"):
-                    try:a=analyze_mlb_moneyline(r.to_dict(),schedule)
+                if r.get("moneyline"):
+                    try:a=analyze_team_moneyline(sport,r.to_dict(),schedule)
                     except Exception:a=None
                     if a:
                         st.markdown(f"<span class='rating'>{a['rating']}</span>",unsafe_allow_html=True)
@@ -89,13 +89,16 @@ def show_team_lines(sport,schedule):
                         for x in a.get("reasons",[]):st.markdown(f"- {x}")
                         st.markdown("**Why I might still pass**")
                         for x in a.get("risks",[]):st.markdown(f"- {x}")
-                        if s.get("team_name") or s.get("opp_name"):
+                        if sport=="MLB" and (s.get("team_name") or s.get("opp_name")):
                             st.markdown("**Starter comparison**")
                             left=f"{s.get('team_name') or 'TBD'}"+(f" — ERA {s['team_era']:.2f}" if s.get('team_era') is not None else "")+(f", WHIP {s['team_whip']:.2f}" if s.get('team_whip') is not None else "")
                             right=f"{s.get('opp_name') or 'TBD'}"+(f" — ERA {s['opp_era']:.2f}" if s.get('opp_era') is not None else "")+(f", WHIP {s['opp_whip']:.2f}" if s.get('opp_whip') is not None else "")
                             st.markdown(f"- **{r['team']}:** {left}\n- **{a['opponent']}:** {right}")
-                        st.caption(f"Recent 10-game win rates: {r['team']} {rec.get('team_win_rate',0):.0%} · {a['opponent']} {rec.get('opp_win_rate',0):.0%}. This is a transparent matchup heuristic, not a guarantee.")
-                    else:st.caption("Moneyline is live, but the matchup model is missing enough clean starter/recent-game data to grade it safely.")
+                        if sport=="MLB":
+                            st.caption(f"Recent 10-game win rates: {r['team']} {rec.get('team_win_rate',0):.0%} · {a['opponent']} {rec.get('opp_win_rate',0):.0%}. This is a transparent matchup heuristic, not a guarantee.")
+                        else:
+                            st.caption(f"Recent tracked win rates: {r['team']} {rec.get('team_win_rate',0):.0%} · {a['opponent']} {rec.get('opp_win_rate',0):.0%}. Early-season NFL grades blend prior-season and current-season results so one game does not dominate.")
+                    else:st.caption("Moneyline is live, but the matchup model is missing enough clean recent-game data to grade it safely.")
                 st.divider()
 
 
@@ -163,7 +166,10 @@ def show_props(sport,filter_mode="ALL"):
     st.caption("Only rows that pass player-to-game validation are shown. BEST / GOOD / PASS / BAD are based on actual player results plus opponent context — not simply on whether a prop exists.")
     props,meta=public_props(sport)
     if props.empty:
-        st.info("No clean public player-prop rows were exposed right now. The board will retry after cache refresh.");return
+        st.info("No clean player-prop rows were exposed by either free source during this refresh. The app checks DraftKings Network first and RotoWire as a fallback instead of silently returning nothing.")
+        with st.expander("Source status"):
+            st.dataframe(pd.DataFrame(meta),use_container_width=True,hide_index=True)
+        return
     analyses={}
     with st.spinner("Validating players and grading props…"):
         for idx,r in props.head(160).iterrows():

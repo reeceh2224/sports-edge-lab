@@ -28,6 +28,16 @@ PROP_URLS = {
     "NFL": "https://dknetwork.draftkings.com/draftkings-sportsbook-player-props/?tb_edate=n7days&tb_eg=88808&tb_view=2",
 }
 
+ROTOWIRE_PROP_URLS = {
+    "MLB": "https://www.rotowire.com/betting/mlb/player-props.php?book=draftkings",
+    "NFL": "https://www.rotowire.com/betting/nfl/player-props.php?book=draftkings",
+}
+
+ROTOWIRE_MARKETS = {
+    "MLB": ["Strikeouts","Total Bases","Hits","Runs Scored","Earned Runs","RBIs","Stolen Bases","Home Runs"],
+    "NFL": ["Passing Yards","Rushing Yards","Receiving Yards","Receptions","Passing Touchdowns","Rushing Attempts","Passing Attempts"],
+}
+
 MLB_SHORT = {
     "Diamondbacks":"Arizona Diamondbacks","D-backs":"Arizona Diamondbacks","Dodgers":"Los Angeles Dodgers",
     "Angels":"Los Angeles Angels","Athletics":"Athletics","Yankees":"New York Yankees","Mets":"New York Mets",
@@ -194,23 +204,110 @@ def _normalize_dk_table(t: pd.DataFrame, sport: str) -> pd.DataFrame:
     return out.drop_duplicates().reset_index(drop=True)
 
 
-def fetch_public_props(sport: str) -> tuple[pd.DataFrame,list[dict]]:
-    url=PROP_URLS[sport]; meta=[]
+def _clean_player_name(v: str) -> str:
+    s=_clean_text(v)
+    # RotoWire sometimes renders "L. Lars Nootbaar"; remove the duplicate initial.
+    m=re.match(r"^[A-Z]\.\s+([A-Za-z][A-Za-z'.-]+\s+.+)$",s)
+    return m.group(1).strip() if m else s
+
+
+def _team_code_from_cell(v: str, sport: str) -> str | None:
+    s=_clean_text(v).replace("@","").strip().upper()
+    if not s:return None
+    aliases=MLB_SHORT if sport=="MLB" else NFL_SHORT
+    # If table already uses codes, keep them.
+    if re.fullmatch(r"[A-Z]{2,3}",s):return s
+    full=_team_name(s,sport)
+    if not full:return None
+    if sport=="MLB":
+        rev={"Arizona Diamondbacks":"ARI","Atlanta Braves":"ATL","Baltimore Orioles":"BAL","Boston Red Sox":"BOS","Chicago Cubs":"CHC","Chicago White Sox":"CHW","Cincinnati Reds":"CIN","Cleveland Guardians":"CLE","Colorado Rockies":"COL","Detroit Tigers":"DET","Houston Astros":"HOU","Kansas City Royals":"KC","Los Angeles Angels":"LAA","Los Angeles Dodgers":"LAD","Miami Marlins":"MIA","Milwaukee Brewers":"MIL","Minnesota Twins":"MIN","New York Mets":"NYM","New York Yankees":"NYY","Athletics":"ATH","Philadelphia Phillies":"PHI","Pittsburgh Pirates":"PIT","San Diego Padres":"SD","San Francisco Giants":"SF","Seattle Mariners":"SEA","St. Louis Cardinals":"STL","Tampa Bay Rays":"TB","Texas Rangers":"TEX","Toronto Blue Jays":"TOR","Washington Nationals":"WSH"}
+    else:
+        rev={v:k for k,v in {"ARI":"Arizona Cardinals","ATL":"Atlanta Falcons","BAL":"Baltimore Ravens","BUF":"Buffalo Bills","CAR":"Carolina Panthers","CHI":"Chicago Bears","CIN":"Cincinnati Bengals","CLE":"Cleveland Browns","DAL":"Dallas Cowboys","DEN":"Denver Broncos","DET":"Detroit Lions","GB":"Green Bay Packers","HOU":"Houston Texans","IND":"Indianapolis Colts","JAX":"Jacksonville Jaguars","KC":"Kansas City Chiefs","LV":"Las Vegas Raiders","LAC":"Los Angeles Chargers","LA":"Los Angeles Rams","MIA":"Miami Dolphins","MIN":"Minnesota Vikings","NE":"New England Patriots","NO":"New Orleans Saints","NYG":"New York Giants","NYJ":"New York Jets","PHI":"Philadelphia Eagles","PIT":"Pittsburgh Steelers","SF":"San Francisco 49ers","SEA":"Seattle Seahawks","TB":"Tampa Bay Buccaneers","TEN":"Tennessee Titans","WAS":"Washington Commanders"}.items()}
+    return rev.get(full)
+
+
+def _parse_rotowire_table(t: pd.DataFrame, sport: str) -> pd.DataFrame:
+    if t.empty:return pd.DataFrame()
+    x=_flatten_cols(t)
+    cols=list(x.columns)
+    player_col=next((c for c in cols if re.search(r"\bplayer\b",str(c),re.I)),None)
+    team_col=next((c for c in cols if re.search(r"(^|\s)team($|\s)",str(c),re.I)),None)
+    opp_col=next((c for c in cols if re.search(r"(^|\s)opp($|\s)",str(c),re.I)),None)
+    if not player_col or not team_col or not opp_col:return pd.DataFrame()
+
+    table_blob=" ".join(map(str,cols)).lower()
+    market=next((m for m in ROTOWIRE_MARKETS[sport] if m.lower() in table_blob),None)
+    if not market:return pd.DataFrame()
+
+    # Prefer DraftKings-specific columns when present. On some tables the header is only
+    # "Under" / "Over" because the sportsbook is selected in the page query.
+    line_col=next((c for c in cols if market.lower() in str(c).lower() and "under" not in str(c).lower() and "over" not in str(c).lower()),None)
+    over_cols=[c for c in cols if "over" in str(c).lower()]
+    under_cols=[c for c in cols if "under" in str(c).lower()]
+    dk_over=next((c for c in over_cols if "draftkings" in str(c).lower()), over_cols[0] if over_cols else None)
+    dk_under=next((c for c in under_cols if "draftkings" in str(c).lower()), under_cols[0] if under_cols else None)
+    if not line_col or not (dk_over or dk_under):return pd.DataFrame()
+
+    rows=[]
+    market_name={"Strikeouts":"Strikeouts Thrown","Home Runs":"Home Runs","RBIs":"RBIs"}.get(market,market)
+    for _,r in x.iterrows():
+        player=_clean_player_name(r.get(player_col,""));tc=_team_code_from_cell(r.get(team_col,""),sport);oc=_team_code_from_cell(r.get(opp_col,""),sport)
+        if not player or not tc or not oc:continue
+        raw_line=_clean_text(r.get(line_col,""))
+        lm=re.search(r"(\d+(?:\.\d+)?)",raw_line)
+        if not lm:continue
+        threshold=lm.group(1);event=f"{tc} @ {oc}" if "@" not in _clean_text(r.get(opp_col,"")) else f"{tc} @ {oc}"
+        for side,col in [("Over",dk_over),("Under",dk_under)]:
+            if not col:continue
+            cell=_clean_text(r.get(col,""))
+            price=_american(cell)
+            # Some cells look like o75.5-116; recover threshold from that cell when available.
+            cm=re.search(r"[ou]?\s*(\d+(?:\.\d+)?)\s*([+-]\d{2,4})",cell,re.I)
+            th=cm.group(1) if cm else threshold
+            if cm and not price:price=cm.group(2)
+            if not price:continue
+            rows.append({"event":event,"event_date":"","market":f"{player} {market_name}","line":f"{side} {th}","odds":price,"book":"DraftKings","source":"RotoWire public odds table"})
+    return pd.DataFrame(rows).drop_duplicates() if rows else pd.DataFrame()
+
+
+def _fetch_rotowire_props(sport: str) -> tuple[pd.DataFrame,dict]:
+    url=ROTOWIRE_PROP_URLS[sport]
     try:
-        r=_get(url); frames=[]
+        r=_get(url);frames=[]
         for t in _tables_from_html(r.text):
-            x=_normalize_dk_table(t,sport)
-            if not x.empty: frames.append(x)
-        if not frames:
-            meta.append({"source":"DraftKings Network","url":url,"rows":0,"ok":True})
-            return pd.DataFrame(columns=["event","event_date","market","line","odds","book","source"]),meta
-        out=pd.concat(frames,ignore_index=True).drop_duplicates()
-        meta.append({"source":"DraftKings Network","url":url,"rows":len(out),"ok":True})
-        return out,meta
+            z=_parse_rotowire_table(t,sport)
+            if not z.empty:frames.append(z)
+        out=pd.concat(frames,ignore_index=True).drop_duplicates() if frames else pd.DataFrame(columns=["event","event_date","market","line","odds","book","source"])
+        return out,{"source":"RotoWire public props","url":url,"rows":len(out),"ok":True}
+    except Exception as exc:
+        return pd.DataFrame(columns=["event","event_date","market","line","odds","book","source"]),{"source":"RotoWire public props","url":url,"rows":0,"ok":False,"error":str(exc)}
+
+
+def fetch_public_props(sport: str) -> tuple[pd.DataFrame,list[dict]]:
+    """Try multiple free public sources. Never invent rows.
+
+    DraftKings Network is tried first because it exposes sportsbook-branded rows when its
+    table is server-rendered. RotoWire is a fallback because its public comparison tables
+    often remain visible when the DK Network tool is rendered client-side.
+    """
+    meta=[];frames=[]
+    url=PROP_URLS[sport]
+    try:
+        r=_get(url);dk=[]
+        for t in _tables_from_html(r.text):
+            z=_normalize_dk_table(t,sport)
+            if not z.empty:dk.append(z)
+        dko=pd.concat(dk,ignore_index=True).drop_duplicates() if dk else pd.DataFrame()
+        meta.append({"source":"DraftKings Network","url":url,"rows":len(dko),"ok":True})
+        if not dko.empty:frames.append(dko)
     except Exception as exc:
         meta.append({"source":"DraftKings Network","url":url,"rows":0,"ok":False,"error":str(exc)})
-        return pd.DataFrame(columns=["event","event_date","market","line","odds","book","source"]),meta
 
+    rw,rmeta=_fetch_rotowire_props(sport);meta.append(rmeta)
+    if not rw.empty:frames.append(rw)
+    if not frames:return pd.DataFrame(columns=["event","event_date","market","line","odds","book","source"]),meta
+    out=pd.concat(frames,ignore_index=True).drop_duplicates(subset=["event","market","line","odds","book"])
+    return out.reset_index(drop=True),meta
 
 def american_to_prob(value) -> float | None:
     if value is None: return None
