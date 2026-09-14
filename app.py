@@ -101,14 +101,44 @@ def show_team_lines(sport,schedule):
 
 def analysis_box(sport,r,a=None):
     a=a or prop_analysis(sport,str(r.get("event","")),str(r.get("market","")),str(r.get("line","")),str(r.get("odds","")))
-    if not a:st.info("This row was not graded because the player/team/market could not be validated cleanly.");return
-    st.markdown(f"<span class='rating'>{a['rating']}</span>",unsafe_allow_html=True)
-    verdict={"BEST":"Strongest model-supported look on the board.","GOOD":"Good statistical support at this price.","PASS":"Mixed evidence — I would pass unless the line improves.","BAD":"The data does not support paying this price.","UNRATED":"Not enough validated data."}.get(a['rating'],a['rating'])
+    if not a:
+        st.info("This row was not graded because the player/team/market could not be validated cleanly.")
+        return
+
+    # Defensive rendering: a cached/partial analysis must never crash the page.
+    # If an older cache entry is missing one split, show the splits that exist.
+    rating=a.get("rating","UNRATED")
+    st.markdown(f"<span class='rating'>{rating}</span>",unsafe_allow_html=True)
+    verdict={"BEST":"Strongest model-supported look on the board.","GOOD":"Good statistical support at this price.","PASS":"Mixed evidence — I would pass unless the line improves.","BAD":"The data does not support paying this price.","UNRATED":"Not enough validated data."}.get(rating,rating)
     st.markdown(f"<div class='verdict'>{a.get('side','')} · {verdict}</div>",unsafe_allow_html=True)
     c1,c2,c3=st.columns(3)
-    c1.metric("Model trend chance",f"{a['trend_probability']:.0%}");c2.metric("Odds imply",f"{a['implied_probability']:.0%}" if a.get('implied_probability') is not None else "—");c3.metric("Estimated edge",f"{a['edge']:+.1%}" if a.get('edge') is not None else "—")
+    tp=a.get("trend_probability")
+    ip=a.get("implied_probability")
+    edge=a.get("edge")
+    c1.metric("Model trend chance",f"{tp:.0%}" if isinstance(tp,(int,float)) else "—")
+    c2.metric("Odds imply",f"{ip:.0%}" if isinstance(ip,(int,float)) else "—")
+    c3.metric("Estimated edge",f"{edge:+.1%}" if isinstance(edge,(int,float)) else "—")
+
     st.markdown("**Recent performance vs this exact line**")
-    st.markdown(f"- Last 3: **{a['last3']['hit_rate']:.0%}** hit · average **{a['last3']['avg']:.2f}** · results {', '.join(str(round(v,1)) for v in a['last3']['values'])}\n- Last 5: **{a['last5']['hit_rate']:.0%}** hit · average **{a['last5']['avg']:.2f}**\n- Last 10: **{a['last10']['hit_rate']:.0%}** hit · average **{a['last10']['avg']:.2f}**\n- Full tracked sample: **{a['season']['hit_rate']:.0%}** across **{a['season']['n']}** games")
+    def _split_text(label,key,show_values=False):
+        d=a.get(key) or {}
+        if not d or d.get("n",0)==0:return f"- {label}: not enough clean results yet"
+        hr=d.get("hit_rate");avg=d.get("avg")
+        base=f"- {label}: **{hr:.0%}** hit · average **{avg:.2f}**" if isinstance(hr,(int,float)) and isinstance(avg,(int,float)) else f"- {label}: sample available"
+        vals=d.get("values") or []
+        if show_values and vals:
+            base += " · results " + ", ".join(str(round(float(v),1)) for v in vals if v is not None)
+        return base
+    st.markdown("\n".join([
+        _split_text("Last 3","last3",True),
+        _split_text("Last 5","last5"),
+        _split_text("Last 10","last10"),
+    ]))
+    season=a.get("season") or {}
+    if season.get("n",0):
+        st.markdown(f"- Full tracked sample: **{season.get('hit_rate',0):.0%}** across **{season.get('n',0)}** games")
+    else:
+        st.markdown("- Full tracked sample: not enough clean results yet")
     if a.get("opponent"):
         st.markdown(f"**History vs {a['opponent']}**")
         vo=a.get("vs_opponent")
@@ -143,8 +173,11 @@ def show_props(sport,filter_mode="ALL"):
     valid_ids=list(analyses.keys())
     if filter_mode!="ALL":valid_ids=[i for i in valid_ids if analyses[i]['rating']==filter_mode]
     if not valid_ids:
-        st.info(f"No validated props currently grade as {filter_mode}." if filter_mode!="ALL" else "No player props passed the player/team/market validation rules right now.")
-        with st.expander("Source status"):st.dataframe(pd.DataFrame(meta),use_container_width=True,hide_index=True)
+        st.info(f"No validated props currently grade as {filter_mode}." if filter_mode!="ALL" else "No player props passed validation right now. If the public source has rows, the Source status box below will show them; invalid player/game pairings are intentionally removed.")
+        with st.expander("Source status"):
+            st.dataframe(pd.DataFrame(meta),use_container_width=True,hide_index=True)
+            if sport=="NFL":
+                st.caption("NFL event labels such as DEN Broncos @ KC Chiefs are now normalized before team validation. If this still shows zero source rows, the public source itself did not expose a clean table during this refresh.")
         return
     rank={"BEST":0,"GOOD":1,"PASS":2,"BAD":3,"UNRATED":4}
     valid_ids.sort(key=lambda i:(rank.get(analyses[i]['rating'],9),-((analyses[i].get('edge') if analyses[i].get('edge') is not None else -99))))

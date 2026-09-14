@@ -64,15 +64,37 @@ def _rating(edge,games,l3,l5,l10,opp_rate=None):
 
 
 def _event_teams(event,sport):
+    """Return canonical full team names from sportsbook event labels.
+
+    Public prop tables often use labels such as ``DEN Broncos @ KC Chiefs`` or
+    ``MIA Marlins @ ARI Diamondbacks`` rather than only a code/full name.  The
+    older parser required an exact match, which caused every legitimate NFL
+    prop to fail player-to-game validation.  This parser recognizes a leading
+    team code anywhere before the nickname, then falls back to full-name and
+    nickname matching.
+    """
     aliases=MLB_EVENT_ALIASES if sport=="MLB" else NFL_EVENT_ALIASES
-    parts=re.split(r"\s+@\s+",str(event))
+    parts=re.split(r"\s+@\s+",str(event).strip())
     if len(parts)!=2:return None,None
+
     def expand(p):
-        p=p.strip()
-        if p in aliases:return aliases[p]
+        raw=re.sub(r"\s+"," ",str(p)).strip()
+        if not raw:return None
+        upper=raw.upper()
+        # Exact/leading code: DEN, DEN Broncos, KC Chiefs, MIA Marlins, etc.
+        for code,full in aliases.items():
+            if upper==code.upper() or re.match(rf"^{re.escape(code)}(?:\s|$)",upper,re.I):
+                return full
+        # Full canonical name anywhere in the label.
         for _,full in aliases.items():
-            if p.lower()==full.lower():return full
-        return p
+            if raw.lower()==full.lower() or full.lower() in raw.lower():
+                return full
+        # Last-resort nickname match, but only on a whole-word suffix.
+        for _,full in aliases.items():
+            nickname=full.split()[-1]
+            if re.search(rf"\b{re.escape(nickname)}\b",raw,re.I):
+                return full
+        return raw
     return expand(parts[0]),expand(parts[1])
 
 
