@@ -147,7 +147,8 @@ def source_table() -> pd.DataFrame:
         ["MLB Stats API", "MLB", "Schedules, rosters, game metadata / probable starters", "$0", "Current-game metadata"],
         ["nflverse / nflfastR datasets", "NFL", "Play-by-play, players, schedules and derived public data", "$0", "Primary"],
         ["Public official team/league pages", "NFL/MLB", "Coach, roster, injury and transaction verification", "$0", "Supplemental"],
-        ["Manual odds entry", "Both", "Avoids requiring a paid odds API in v1", "$0", "Market comparison"],
+        ["Public odds webpages", "NFL/MLB", "VegasInsider team markets + DraftKings Network/RotoWire public prop pages when exposed", "$0", "Live lines / props"],
+        ["Manual odds entry", "Both", "Fallback if the free live-odds quota is unavailable", "$0", "Market comparison"],
     ], columns=["Source", "Sport", "Purpose", "Cost", "Role"])
 
 
