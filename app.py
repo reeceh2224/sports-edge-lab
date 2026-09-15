@@ -6,7 +6,23 @@ from database import init_db
 from live_data import fetch_mlb_schedule,fetch_nfl_schedule,data_health
 from public_odds import fetch_team_moneylines,fetch_public_props
 from trend_analysis import analyze_prop
-from team_analysis import analyze_team_moneyline
+try:
+    from team_analysis import analyze_team_moneyline
+except ImportError:
+    # Backward-compatible fallback if Streamlit briefly has an older team_analysis.py
+    # cached/deployed while app.py has already updated. This keeps the app bootable.
+    from team_analysis import analyze_mlb_moneyline
+    try:
+        from team_analysis import analyze_nfl_moneyline
+    except ImportError:
+        analyze_nfl_moneyline = None
+
+    def analyze_team_moneyline(sport, row, schedule):
+        if sport == "MLB":
+            return analyze_mlb_moneyline(row, schedule)
+        if analyze_nfl_moneyline is not None:
+            return analyze_nfl_moneyline(row, schedule)
+        return None
 from demo_data import source_table
 
 st.set_page_config(page_title="Sports Edge Lab",page_icon="📊",layout="wide",initial_sidebar_state="collapsed")
